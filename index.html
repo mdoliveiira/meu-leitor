@@ -273,7 +273,9 @@
   .confetti{position:fixed; top:-20px; z-index:59; pointer-events:none; font-size:18px; will-change:transform,opacity}
   @keyframes fall{to{transform:translateY(104vh) rotate(var(--r)); opacity:.2}}
   .medalstrip{cursor:pointer}
-  .medals-sub{text-align:center; color:var(--ink-soft); font-size:13px; margin:-10px 0 16px}
+  .medals-sub{text-align:center; color:var(--ink-soft); font-size:13px; margin:-10px 0 12px}
+  .medals-time{text-align:center; font-size:15px; font-weight:700; color:var(--accent);
+    background:var(--bg2); border:1px solid var(--line); border-radius:12px; padding:12px; margin:0 0 16px}
   .medal-row{display:flex; align-items:center; gap:13px; padding:13px 4px; border-bottom:1px solid var(--line)}
   .medal-row .m-ico{font-size:26px; width:32px; text-align:center; flex:none}
   .medal-row.off .m-ico{filter:grayscale(1); opacity:.45}
@@ -404,6 +406,7 @@
 <div class="sheet" id="medalsSheet">
   <h3>Medalhas do livro</h3>
   <div class="medals-sub" id="medalsSub"></div>
+  <div class="medals-time" id="medalsTime"></div>
   <div id="medalsList"></div>
 </div>
 
@@ -665,12 +668,15 @@ async function renderLibrary(){
       ? Math.round(((bk.progress.chapter+1)/bk.spineLen)*100):0;
     const md=bk.medals||{};
     const done=!!md.done;
+    const rs=bk.readSeconds||0;
+    const tstr=fmtDur(rs);
     const strip=bk.type==='epub'
       ? `<div class="medalstrip">${BOOKMEDALS.map(([k,,ico])=>`<span class="${md[k]?'on':''}">${ico}</span>`).join('')}</div>`
       : '';
     const metaText = bk.type==='pdf'
-      ? 'PDF'
-      : (done ? '🏆 Terminado' : (pct>0 ? pct+'% lido' : (bk.author?escapeHtml(bk.author):'Não iniciado')));
+      ? (rs>0 ? 'PDF · '+tstr : 'PDF')
+      : (done ? '🏆 Terminado · '+fmtDur(bk.finishSeconds||rs)
+         : (pct>0 ? pct+'% · '+tstr : (bk.author?escapeHtml(bk.author):'Não iniciado')));
     el.innerHTML=`
       <div class="cover">
         ${bk.cover?`<img src="${bk.cover}" alt="">`:`<div class="placeholder">${escapeHtml(bk.title)}</div>`}
@@ -1071,6 +1077,10 @@ function closeSheet(){
 function openMedals(bk){
   const md=bk.medals||{};
   $('#medalsSub').textContent=bk.title;
+  const rs=bk.readSeconds||0;
+  $('#medalsTime').textContent = md.done
+    ? '🏆 Lido em '+fmtDur(bk.finishSeconds||rs)
+    : (rs>0 ? '⏱️ '+fmtDur(rs)+' de leitura até agora' : '⏱️ Ainda não começou');
   const list=$('#medalsList'); list.innerHTML='';
   BOOKMEDALS.forEach(([key,th,ico,name])=>{
     const on=!!md[key];
@@ -1162,6 +1172,7 @@ document.addEventListener('pointerdown', bumpActivity, {passive:true});
 function addReadingSeconds(sec){
   const d=todayStr();
   stats.totalSeconds+=sec;
+  if(cur){ cur.readSeconds=(cur.readSeconds||0)+sec; saveProgress(); }  // tempo por livro
   stats.days[d]=stats.days[d]||{sec:0};
   stats.days[d].sec+=sec;
   sessionSec+=sec;
@@ -1205,7 +1216,12 @@ function updateBookMedals(frac){
   for(const [key,th,ico,name] of BOOKMEDALS){
     if(cur.maxFrac>=th && !cur.medals[key]){
       cur.medals[key]=Date.now(); changed=true;
-      enqueueCeleb(ico,'Medalha do livro!', name+' — '+cur.title);
+      if(key==='done'){
+        cur.finishSeconds=cur.readSeconds||0;   // congela o tempo total ao terminar
+        enqueueCeleb('🏆','Livro terminado!', fmtDur(cur.finishSeconds)+' de leitura 🎉');
+      }else{
+        enqueueCeleb(ico,'Medalha do livro!', name+' — '+cur.title);
+      }
     }
   }
   if(changed) dbPut(cur);
