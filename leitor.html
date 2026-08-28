@@ -122,6 +122,14 @@
     color:var(--reader-ink);
     transition:transform .34s cubic-bezier(.33,0,.2,1); will-change:transform;
   }
+  #turnFx{position:absolute; top:0; left:0; height:100%; width:90px; pointer-events:none;
+    z-index:2; opacity:0; will-change:transform,opacity;
+    background:linear-gradient(90deg,
+      rgba(0,0,0,0) 0%, rgba(0,0,0,.13) 40%, rgba(255,255,255,.11) 50%,
+      rgba(0,0,0,.10) 60%, rgba(0,0,0,0) 100%);}
+  :root[data-theme="dark"] #turnFx{background:linear-gradient(90deg,
+      rgba(0,0,0,0) 0%, rgba(0,0,0,.34) 40%, rgba(255,255,255,.06) 50%,
+      rgba(0,0,0,.28) 60%, rgba(0,0,0,0) 100%);}
   #pagesEl img{max-width:100% !important; max-height:82% !important; height:auto !important;
     margin:12px auto; display:block; border-radius:4px; break-inside:avoid}
   #pagesEl p{margin:0 0 1em; orphans:2; widows:2}
@@ -350,7 +358,7 @@
     <button class="icon-btn" id="tocBtn" title="Índice e marcadores">☰</button>
     <button class="icon-btn" id="settingsBtn">Aa</button>
   </div>
-  <div id="content"><div id="pagesEl"></div></div>
+  <div id="content"><div id="pagesEl"></div><div id="turnFx"></div></div>
   <iframe id="pdfframe" class="hidden"></iframe>
   <div class="reader-foot" id="readerFoot">
     <button class="navbtn" id="prevBtn">‹ Anterior</button>
@@ -957,19 +965,46 @@ async function jumpToBookmark(m){
 }
 
 // vira página (+1 avança, -1 volta); cruza capítulos nas pontas
-function turn(dir){
+function turn(dir, viaTap){
   if(!cur||cur.type!=='epub') return;
   bumpActivity();
   const i=cur.progress.page+dir;
-  if(i<0){ if(cur.progress.chapter>0) showChapter(cur.progress.chapter-1,'last'); return; }
+  if(i<0){ if(cur.progress.chapter>0){ if(viaTap) turnFxSweep('bwd'); showChapter(cur.progress.chapter-1,'last'); } return; }
   if(i>=pageCount){
-    if(cur.progress.chapter<curSpine.length-1){ stats.totalPages++; saveStats(); showChapter(cur.progress.chapter+1,0); }
+    if(cur.progress.chapter<curSpine.length-1){ if(viaTap) turnFxSweep('fwd'); stats.totalPages++; saveStats(); showChapter(cur.progress.chapter+1,0); }
     return;
   }
   cur.progress.page=i;
   if(dir>0){ stats.totalPages++; saveStats(); }
+  if(viaTap) turnFxSweep(dir>0?'fwd':'bwd');
   $('#pagesEl').style.transition='';
   renderPage(); saveProgress();
+}
+
+/* ---------- Efeito "página levantando" (sombra que segue o dedo) ---------- */
+function turnFxSet(x, op){
+  const fx=$('#turnFx');
+  fx.style.transition='none';
+  fx.style.opacity=op;
+  fx.style.transform='translateX('+(x-45)+'px)';   // 90px de largura, centrada em x
+}
+function turnFxClear(){
+  const fx=$('#turnFx');
+  fx.style.transition='opacity .3s';
+  fx.style.opacity='0';
+}
+function turnFxSweep(dir){
+  const fx=$('#turnFx'), w=window.innerWidth;
+  const startX=dir==='fwd'? w : 0;
+  const endX  =dir==='fwd'? w*0.16 : w*0.84;
+  fx.style.transition='none';
+  fx.style.opacity='0.5';
+  fx.style.transform='translateX('+(startX-45)+'px)';
+  requestAnimationFrame(()=>{
+    fx.style.transition='transform .34s cubic-bezier(.33,0,.2,1), opacity .34s';
+    fx.style.opacity='0';
+    fx.style.transform='translateX('+(endX-45)+'px)';
+  });
 }
 
 // recalcula mantendo a posição (troca de fonte / girar tela)
@@ -989,8 +1024,8 @@ function saveProgress(){
   saveT=setTimeout(async()=>{ if(cur) await dbPut(cur); },400);
 }
 
-$('#prevBtn').onclick=()=>turn(-1);
-$('#nextBtn').onclick=()=>turn(1);
+$('#prevBtn').onclick=()=>turn(-1,true);
+$('#nextBtn').onclick=()=>turn(1,true);
 
 /* ---------- Fechar leitor ---------- */
 $('#backBtn').onclick=async()=>{
@@ -1017,8 +1052,8 @@ let dragX=null, dragY=null, dragBase=0, moved=false, suppressClick=false;
 
 function handleTap(x){
   const w=window.innerWidth;
-  if(x < w*0.33) turn(-1);
-  else if(x > w*0.66) turn(1);
+  if(x < w*0.33) turn(-1,true);
+  else if(x > w*0.66) turn(1,true);
   else { $('#readerTop').classList.toggle('top-hidden'); $('#readerFoot').classList.toggle('bot-hidden'); }
 }
 
@@ -1040,6 +1075,9 @@ contentEl.addEventListener('touchmove',e=>{
   if((dx>0 && cur.progress.page===0 && firstChap) ||
      (dx<0 && cur.progress.page===pageCount-1 && lastChap)) d=dx*0.3;   // resistência nas pontas
   $('#pagesEl').style.transform='translateX('+(dragBase+d)+'px)';
+  // sombra "página levantando" seguindo o dedo
+  const w=window.innerWidth;
+  turnFxSet(dx<0 ? w+dx : dx, Math.min(0.75, Math.abs(dx)/w*1.5));
 },{passive:false});
 
 contentEl.addEventListener('touchend',e=>{
@@ -1048,9 +1086,7 @@ contentEl.addEventListener('touchend',e=>{
   $('#pagesEl').style.transition='';
   suppressClick=true; setTimeout(()=>suppressClick=false,500);
   if(!moved || Math.abs(dx)<10) handleTap(dragX);
-  else if(dx<=-45) turn(1);
-  else if(dx>=45) turn(-1);
-  else renderPage();                               // não passou do limite: volta
+  else { if(dx<=-45) turn(1); else if(dx>=45) turn(-1); else renderPage(); turnFxClear(); }
   dragX=null; moved=false;
 },{passive:true});
 
