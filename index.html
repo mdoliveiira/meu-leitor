@@ -80,9 +80,14 @@
     background:var(--accent); color:var(--accent-ink); padding:3px 7px; border-radius:6px;
   }
   .progress-bar{position:absolute; left:0; bottom:0; height:4px; background:var(--accent)}
+  .cover .done-badge{position:absolute; top:8px; left:8px; font-size:15px;
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.4))}
   .book .title{font-size:14px; font-weight:600; line-height:1.3;
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden}
   .book .meta{font-size:11px; color:var(--ink-soft)}
+  .medalstrip{display:flex; gap:3px; font-size:13px; line-height:1; margin:-2px 0 1px}
+  .medalstrip span{filter:grayscale(1); opacity:.28}
+  .medalstrip span.on{filter:none; opacity:1}
 
   .empty{
     flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -233,7 +238,13 @@
   .ring-center{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center}
   .ring-center #ringMin{font-size:44px; font-weight:800; line-height:1}
   .ring-sub{font-size:13px; color:var(--ink-soft); margin-top:3px}
-  .ring-caption{text-align:center; color:var(--ink-soft); font-size:14px; margin:0 0 22px; line-height:1.4}
+  .ring-caption{text-align:center; color:var(--ink-soft); font-size:14px; margin:0 0 18px; line-height:1.4}
+  .goal-set{margin:0 0 24px; text-align:center}
+  .goal-set-lbl{font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--ink-soft); margin-bottom:10px}
+  .goal-sel{display:flex; gap:8px; justify-content:center; flex-wrap:wrap}
+  .goal-sel button{min-width:64px; height:42px; padding:0 12px; border-radius:11px; background:var(--card);
+    border:1.5px solid var(--line); font-weight:700; font-size:14px; color:var(--ink)}
+  .goal-sel button.active{background:var(--accent); color:var(--accent-ink); border-color:var(--accent)}
   .stat-row{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:26px}
   .stat{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 6px; text-align:center}
   .stat-num{font-size:22px; font-weight:800}
@@ -299,6 +310,10 @@
       <div class="ring-center"><div id="ringMin">0</div><div class="ring-sub">de 10 min</div></div>
     </div>
     <div class="ring-caption" id="ringCaption"></div>
+    <div class="goal-set">
+      <div class="goal-set-lbl">Meta diária</div>
+      <div class="goal-sel" id="goalSel"></div>
+    </div>
     <div class="stat-row">
       <div class="stat"><div class="stat-num" id="stStreak">0</div><div class="stat-lbl">🔥 ofensiva</div></div>
       <div class="stat"><div class="stat-num" id="stBest">0</div><div class="stat-lbl">recorde</div></div>
@@ -629,14 +644,24 @@ async function renderLibrary(){
     el.className='book';
     const pct=bk.type==='epub'&&bk.progress&&bk.spineLen
       ? Math.round(((bk.progress.chapter+1)/bk.spineLen)*100):0;
+    const md=bk.medals||{};
+    const done=!!md.done;
+    const strip=bk.type==='epub'
+      ? `<div class="medalstrip">${BOOKMEDALS.map(([k,,ico])=>`<span class="${md[k]?'on':''}">${ico}</span>`).join('')}</div>`
+      : '';
+    const metaText = bk.type==='pdf'
+      ? 'PDF'
+      : (done ? '🏆 Terminado' : (pct>0 ? pct+'% lido' : (bk.author?escapeHtml(bk.author):'Não iniciado')));
     el.innerHTML=`
       <div class="cover">
         ${bk.cover?`<img src="${bk.cover}" alt="">`:`<div class="placeholder">${escapeHtml(bk.title)}</div>`}
         <span class="type-tag">${bk.type.toUpperCase()}</span>
-        ${pct>0?`<div class="progress-bar" style="width:${pct}%"></div>`:''}
+        ${done?`<span class="done-badge">🏆</span>`:''}
+        ${pct>0&&!done?`<div class="progress-bar" style="width:${pct}%"></div>`:''}
       </div>
       <div class="title">${escapeHtml(bk.title)}</div>
-      <div class="meta">${bk.author?escapeHtml(bk.author):(pct>0?pct+'% lido':'Não iniciado')}</div>`;
+      ${strip}
+      <div class="meta">${metaText}</div>`;
     el.onclick=()=>openBook(bk.id);
     grid.appendChild(el);
   }
@@ -849,6 +874,7 @@ function renderPage(){
   $('#nextBtn').disabled=lastChap && i===pageCount-1;
   updateBookmarkBtn();
   if(lastChap && i===pageCount-1) markFinished(cur.id);   // chegou no fim = livro terminado
+  updateBookMedals((cur.progress.chapter + (i+1)/pageCount)/curSpine.length);  // medalhas de progresso do livro
 }
 
 /* ---------- Marcadores ---------- */
@@ -1032,9 +1058,10 @@ $('#themeToggle').onclick=()=>{ prefs.theme=prefs.theme==='dark'?'light':'dark';
 /* ============================================================
    GAMIFICAÇÃO — ofensiva, meta diária, troféus
    ============================================================ */
-const GOAL_MIN=10;                       // meta diária (minutos)
-const GOAL_SEC=GOAL_MIN*60;
 const RING_C=2*Math.PI*52;               // circunferência do anel
+const GOAL_OPTIONS=[5,10,15,20,30];      // metas diárias disponíveis (min)
+function goalMin(){ return stats.goalMinutes||10; }
+function goalSec(){ return goalMin()*60; }
 
 function todayStr(d=new Date()){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -1047,7 +1074,7 @@ function dateAdd(str,n){
 let stats=loadStats();
 function loadStats(){
   let s={}; try{ s=JSON.parse(localStorage.getItem('stats')||'{}'); }catch(e){}
-  s.goalMinutes=GOAL_MIN;
+  s.goalMinutes=s.goalMinutes||10;
   s.totalSeconds=s.totalSeconds||0;
   s.totalPages=s.totalPages||0;
   s.booksFinished=s.booksFinished||0;
@@ -1098,7 +1125,7 @@ function addReadingSeconds(sec){
   stats.days[d].sec+=sec;
   sessionSec+=sec;
   if(sessionSec>=3600 && !stats.marathon){ stats.marathon=true; }
-  if(stats.days[d].sec>=GOAL_SEC) noteGoalMet(d);
+  if(stats.days[d].sec>=goalSec()) noteGoalMet(d);
   saveStats(); updateHeaderGame();
   if(!$('#achieve').classList.contains('hidden')) renderAchieve();
   checkAchievements();
@@ -1113,12 +1140,34 @@ function noteGoalMet(d){
   stats.lastGoalDate=d;
   stats.longestStreak=Math.max(stats.longestStreak, stats.streak);
   saveStats(); updateHeaderGame();
-  celebrate('🎯','Meta batida!','+'+GOAL_MIN+' min hoje — ofensiva '+stats.streak+' 🔥');
+  enqueueCeleb('🎯','Meta batida!','+'+goalMin()+' min hoje — ofensiva '+stats.streak+' 🔥');
 }
 function markFinished(id){
   if(!id || stats.finishedIds.includes(id)) return;
   stats.finishedIds.push(id); stats.booksFinished++;
   saveStats(); checkAchievements();
+}
+
+// ---- medalhas por livro (progresso: começou/25/metade/75/terminado) ----
+const BOOKMEDALS=[
+  ['started',0.0001,'📖','Começou'],
+  ['q25',    0.25,  '🌱','25% lido'],
+  ['q50',    0.5,   '🌓','Na metade'],
+  ['q75',    0.75,  '🔥','75% lido'],
+  ['done',   0.999, '🏆','Livro terminado'],
+];
+function updateBookMedals(frac){
+  if(!cur || cur.type!=='epub') return;
+  cur.medals=cur.medals||{};
+  cur.maxFrac=Math.max(cur.maxFrac||0, frac);
+  let changed=false;
+  for(const [key,th,ico,name] of BOOKMEDALS){
+    if(cur.maxFrac>=th && !cur.medals[key]){
+      cur.medals[key]=Date.now(); changed=true;
+      enqueueCeleb(ico,'Medalha do livro!', name+' — '+cur.title);
+    }
+  }
+  if(changed) dbPut(cur);
 }
 
 // ---- troféus ----
@@ -1139,31 +1188,30 @@ const ACHS=[
   {id:'lark',    ico:'🌅', n:'Cotovia',          d:'Leu antes das 7h',        t:s=>s.lark},
   {id:'marathon',ico:'🏃', n:'Maratonista',      d:'1h numa sessão só',       t:s=>s.marathon},
 ];
-let popQueue=[], popping=false;
 function checkAchievements(){
+  let any=false;
   for(const a of ACHS){
     if(!stats.unlocked[a.id] && a.t(stats)){
-      stats.unlocked[a.id]=Date.now();
-      popQueue.push(a);
+      stats.unlocked[a.id]=Date.now(); any=true;
+      enqueueCeleb(a.ico,'Troféu desbloqueado!',a.n);
     }
   }
-  if(popQueue.length){ saveStats(); drainPops(); if(!$('#achieve').classList.contains('hidden')) renderAchieve(); }
-}
-function drainPops(){
-  if(popping || !popQueue.length) return;
-  popping=true; const a=popQueue.shift();
-  celebrate(a.ico,'Troféu desbloqueado!',a.n);
-  setTimeout(()=>{ popping=false; drainPops(); }, 2600);
+  if(any){ saveStats(); if(!$('#achieve').classList.contains('hidden')) renderAchieve(); }
 }
 
-// ---- comemoração (banner + confete) ----
-function celebrate(ico,kicker,name){
+// ---- comemoração (banner + confete), uma de cada vez ----
+let celebQueue=[], celebBusy=false;
+function enqueueCeleb(ico,kicker,name){ celebQueue.push([ico,kicker,name]); drainCeleb(); }
+function drainCeleb(){
+  if(celebBusy || !celebQueue.length) return;
+  celebBusy=true; const [ico,kicker,name]=celebQueue.shift();
   const pop=document.createElement('div'); pop.className='ach-pop';
   pop.innerHTML='<span class="p-ico">'+ico+'</span><div><div class="p-k">'+escapeHtml(kicker)+'</div><div class="p-n">'+escapeHtml(name)+'</div></div>';
   document.body.appendChild(pop);
   requestAnimationFrame(()=>pop.classList.add('show'));
   confetti();
-  setTimeout(()=>{ pop.classList.remove('show'); setTimeout(()=>pop.remove(),500); }, 2400);
+  setTimeout(()=>{ pop.classList.remove('show'); setTimeout(()=>pop.remove(),500);
+    celebBusy=false; drainCeleb(); }, 2500);
 }
 function confetti(){
   const em=['🎉','✨','🎊','⭐','🔥','📖'];
@@ -1190,23 +1238,31 @@ function updateHeaderGame(){
   const st=liveStreak();
   $('#streakNum').textContent=st;
   $('#streakPill').classList.toggle('hot', st>0);
-  const sec=todaySec(), pct=Math.min(100, sec/GOAL_SEC*100);
+  const sec=todaySec(), pct=Math.min(100, sec/goalSec()*100);
   const min=Math.floor(sec/60);
   $('#dailyFill').style.width=pct+'%';
-  const done=sec>=GOAL_SEC;
+  const done=sec>=goalSec();
   $('#dailyBar').classList.toggle('done',done);
-  $('#dailyLabel').textContent = done ? '✓ Meta de hoje batida! '+min+' min' : '🎯 Meta de hoje: '+min+' / '+GOAL_MIN+' min';
+  $('#dailyLabel').textContent = done ? '✓ Meta de hoje batida! '+min+' min' : '🎯 Meta de hoje: '+min+' / '+goalMin()+' min';
 }
 function renderAchieve(){
-  const sec=todaySec(), prog=Math.min(1, sec/GOAL_SEC);
+  const sec=todaySec(), prog=Math.min(1, sec/goalSec());
   $('#ringFg').style.strokeDashoffset=RING_C*(1-prog);
   $('#ringMin').textContent=Math.floor(sec/60);
-  $('#ringMin').nextElementSibling.textContent='de '+GOAL_MIN+' min';
-  $('#achieve').classList.toggle('goal-done', sec>=GOAL_SEC);
+  $('#ringMin').nextElementSibling.textContent='de '+goalMin()+' min';
+  $('#achieve').classList.toggle('goal-done', sec>=goalSec());
   const st=liveStreak();
-  $('#ringCaption').textContent = sec>=GOAL_SEC
+  $('#ringCaption').textContent = sec>=goalSec()
     ? (st>1?'Ofensiva de '+st+' dias! Não quebre a corrente 🔥':'Meta batida! Volte amanhã pra começar a ofensiva 🔥')
-    : 'Faltam '+Math.max(0,Math.ceil((GOAL_SEC-sec)/60))+' min pra fechar o anel de hoje';
+    : 'Faltam '+Math.max(0,Math.ceil((goalSec()-sec)/60))+' min pra fechar o anel de hoje';
+  // seletor de meta diária
+  const gsel=$('#goalSel'); gsel.innerHTML='';
+  GOAL_OPTIONS.forEach(m=>{
+    const b=document.createElement('button');
+    b.textContent=m+' min'; b.className=(m===goalMin()?'active':'');
+    b.onclick=()=>setGoal(m);
+    gsel.appendChild(b);
+  });
   $('#stStreak').textContent=st;
   $('#stBest').textContent=stats.longestStreak;
   $('#stTime').textContent=fmtDur(stats.totalSeconds);
@@ -1219,6 +1275,12 @@ function renderAchieve(){
     el.innerHTML='<div class="t-ico">'+(on?a.ico:'🔒')+'</div><div class="t-name">'+escapeHtml(a.n)+'</div><div class="t-desc">'+escapeHtml(a.d)+'</div>';
     grid.appendChild(el);
   }
+}
+function setGoal(min){
+  stats.goalMinutes=min;
+  const d=todayStr();
+  if(stats.days[d] && stats.days[d].sec>=goalSec() && !stats.days[d].goalMet) noteGoalMet(d);
+  saveStats(); updateHeaderGame(); renderAchieve();
 }
 function openAchieve(){ renderAchieve(); $('#achieve').classList.remove('hidden'); }
 function closeAchieve(){ $('#achieve').classList.add('hidden'); }
